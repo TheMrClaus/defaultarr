@@ -111,15 +111,53 @@ See [config.yaml](https://github.com/varthe/Defaulterr/blob/main/config.yaml) fo
 
 #### REQUIRED SETTINGS
 
-- **plex_server_url**: Your Plex server URL.
-- **plex_owner_name**: Used to identify the owner, allowing them to be included in groups.
-- **plex_owner_token**: The server owner's token.
-- **plex_client_identifier**: Find this value using the instructions below.
+Select a provider with the top-level `provider` key (`plex` or `emby`), then fill in the matching block.
 
-#### Obtaining the Client Identifier
+**Plex:**
+
+```yaml
+provider: plex
+plex:
+  server_url: "http://plex:32400"  # Your Plex server URL
+  owner_name: "yourPlexUser"       # Used to identify the owner so they can be in groups
+  owner_token: "xxxxx"             # The server owner's token
+  client_identifier: "xxxxx"       # See below for how to obtain
+```
+
+**Emby:**
+
+```yaml
+provider: emby
+emby:
+  server_url: "http://emby:8096"   # Your Emby server URL
+  api_key: "xxxxx"                 # Admin API key (see below)
+  owner_name: "yourEmbyUser"       # Optional; admin user used for server-scoped queries
+```
+
+> Legacy flat Plex config (`plex_server_url`, `plex_owner_token`, `plex_client_identifier`, `plex_owner_name`, top-level `managed_users`) is still accepted via a deprecation shim but will be removed in a future release. Migrate to the nested form above.
+
+#### Obtaining the Plex Client Identifier
 
 1. Go to `https://plex.tv/api/resources?X-Plex-Token={your_admin_token}` (replace `{your_admin_token}` with your token).
 2. Search for your server and find the `clientIdentifier` value. This **HAS TO** be the server's identifier, not the owner's.
+
+#### Obtaining an Emby API Key
+
+1. In Emby, go to **Dashboard -> Advanced -> API Keys**.
+2. Click **New API Key**, give it a name (e.g., `defaultarr`), and copy the generated key into `emby.api_key`.
+3. `emby.owner_name` is optional. If set, it must match an Emby username with admin rights on the server. If omitted, the first administrator user returned by `/Users` is used for internal scoped queries.
+
+#### Emby-Specific Behavior
+
+Emby does **not** expose per-item default track APIs. Instead, defaultarr writes user-level preferences on Emby:
+
+- `AudioLanguagePreference` and `SubtitleLanguagePreference` on the user's profile
+- `SubtitleMode` (`Default` or `None` when subtitles are explicitly disabled)
+- `PlayDefaultAudioTrack = false` so Emby honors your language preferences
+
+Because of this, only the `language` / `languageCode` fields of a matched stream are actually applied. Filters may still use other fields (`codec`, `extendedDisplayTitle`, etc.) to decide **which** stream matches, but the apply step only writes the language preference. defaultarr logs a warning at startup for each filter that uses non-language criteria so you know the effect will not fully mirror a Plex setup. During a run, it also deduplicates per-user writes so the same preference is not POSTed repeatedly.
+
+Supported Emby library collection types: **Movies**, **TV Shows**, **Home Videos** (treated as movies). Other types (Music, Books, etc.) are not supported.
 
 #### RUN SETTINGS
 
@@ -283,3 +321,17 @@ To automate filter applications for newly added items:
 }
 </episode>
 ```
+
+### Emby Webhook Integration
+
+Emby posts its native webhook payloads directly; no middleware is needed. To automate filter applications when new items are added:
+
+1. In Emby, go to **Dashboard -> Notifications**.
+2. Click **Add Notification** and select **Webhooks** (built in on recent Emby builds; install the Webhooks plugin first if the option is missing).
+3. Set **Url** to `http://defaultarr:3184/webhook/emby` (swap the host for wherever the container is reachable from Emby).
+4. Set **Request content type** to `application/json`.
+5. Under **Events**, enable at least **New media added to library** (internal event name `library.new`). `item.add`, `media.added`, and `library.added` are also accepted.
+6. Leave user / library filters empty unless you want to restrict which items fire the webhook.
+7. Save. defaultarr ignores events it does not recognize and responds `200` so Emby will not retry excessively.
+
+When a matching event arrives, defaultarr walks the item's parent chain to figure out which configured library it belongs to, then applies the filters for that library to every user in the relevant groups.
