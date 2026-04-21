@@ -4,7 +4,71 @@ Change the default audio and subtitle streams for items in Plex per user based o
 
 ## Getting Started
 
-### Docker Compose
+### Deploying with Docker
+
+Defaulterr runs as a single Node.js container. It reads `/config/config.yaml` and writes to `/logs`. The container listens on port `3184`.
+
+#### 1. Prepare the config directory
+
+```bash
+mkdir -p /path/to/config /path/to/logs
+```
+
+Copy [`config.yaml`](./config.yaml) into `/path/to/config/config.yaml` and edit it. The file must declare a `provider` and a matching provider block. Minimum examples:
+
+```yaml
+# Plex
+provider: plex
+plex:
+  server_url: "http://plex:32400"
+  owner_name: "yourPlexUser"
+  owner_token: "xxxxx"
+  client_identifier: "xxxxx"
+```
+
+```yaml
+# Emby
+provider: emby
+emby:
+  server_url: "http://emby:8096"
+  api_key: "xxxxx"
+  owner_name: "yourEmbyUser"
+```
+
+See [Configuration Overview](#configuration-overview) below for groups, filters, and run settings.
+
+#### 2a. Build from source (required for Emby)
+
+The upstream image `varthe/defaulterr:latest` is Plex-only and does **not** include the Emby provider added in this fork. Build locally:
+
+```bash
+git clone https://github.com/TheMrClaus/defaultarr.git
+cd defaultarr
+docker build -t defaultarr:latest .
+```
+
+Compose file:
+
+```yaml
+services:
+  defaultarr:
+    image: defaultarr:latest
+    container_name: defaultarr
+    hostname: defaultarr
+    ports:
+      - 3184:3184
+    volumes:
+      - /path/to/config:/config
+      - /path/to/logs:/logs
+    environment:
+      - TZ=Europe/London
+      - LOG_LEVEL=info
+    restart: unless-stopped
+```
+
+#### 2b. Prebuilt upstream image (Plex only)
+
+If you only need Plex support, you can skip the build step and use the upstream image:
 
 ```yaml
 services:
@@ -20,7 +84,22 @@ services:
     environment:
       - TZ=Europe/London
       - LOG_LEVEL=info
-``` 
+    restart: unless-stopped
+```
+
+#### 3. Start and verify
+
+```bash
+docker compose up -d
+docker compose logs -f
+```
+
+On startup you should see `Validated and loaded config file` followed by `Server is running on port 3184`. If you hit a schema error, the log will tell you which field failed validation.
+
+#### Webhook endpoints
+
+- Plex via Tautulli: `POST http://<host>:3184/webhook` (see [Tautulli Webhook Integration](#tautulli-webhook-integration)).
+- Emby: `POST http://<host>:3184/webhook/emby`. In Emby, go to **Notifications -> Webhooks** and add the URL. The server accepts Emby's native webhook payloads and ignores irrelevant events.
 
 ### Unraid Template
 Click [here](https://raw.githubusercontent.com/varthe/Defaulterr/refs/heads/main/defaulterr.xml) to download the Unraid template.
